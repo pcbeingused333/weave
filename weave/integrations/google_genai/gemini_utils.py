@@ -153,6 +153,14 @@ def google_genai_gemini_accumulator(
         if i >= len(acc_candidates):
             break
 
+        if value_candidate.finish_reason is not None:
+            acc.candidates[i].finish_reason = value_candidate.finish_reason
+        if value_candidate.content is None:
+            continue
+        if acc.candidates[i].content is None:
+            acc.candidates[i].content = value_candidate.content
+            continue
+
         value_parts = value_candidate.content.parts or []
         for value_part in value_parts:
             if value_part.text is None:
@@ -182,6 +190,12 @@ def google_genai_gemini_accumulator(
     # Replace token counts with latest non-None values (Gemini returns cumulative counts)
     # Per Google docs: "When streaming output, the usageMetadata attribute only appears
     # on the last chunk of the stream."
+    if value.usage_metadata is None:
+        return acc
+    if acc.usage_metadata is None:
+        acc.usage_metadata = value.usage_metadata
+        return acc
+
     if value.usage_metadata.prompt_token_count is not None:
         acc.usage_metadata.prompt_token_count = value.usage_metadata.prompt_token_count
 

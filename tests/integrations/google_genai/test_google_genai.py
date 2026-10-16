@@ -11,6 +11,7 @@ from google.genai.types import (
     CodeExecutionResult,
     Content,
     ExecutableCode,
+    FinishReason,
     GenerateContentConfig,
     GenerateContentResponse,
     GenerateContentResponseUsageMetadata,
@@ -1220,3 +1221,61 @@ def test_wrapper_leaves_recorded_inputs_boxed(client):
     assert type(captured["contents"]) is str
     call = next(iter(client.get_calls()))
     assert call.inputs["contents"].ref.uri() == question.ref.uri()
+
+
+def _stream_chunk(
+    text: str | None = None,
+    finish_reason: FinishReason | None = None,
+    *,
+    content: bool = True,
+    usage: bool = True,
+) -> GenerateContentResponse:
+    return GenerateContentResponse(
+        candidates=[
+            Candidate(
+                index=0,
+                content=Content(role="model", parts=[Part(text=text)])
+                if content
+                else None,
+                finish_reason=finish_reason,
+            )
+        ],
+        usage_metadata=GenerateContentResponseUsageMetadata(
+            prompt_token_count=5, candidates_token_count=3, total_token_count=8
+        )
+        if usage
+        else None,
+    )
+
+
+def test_accumulator_keeps_finish_reason_from_last_chunk() -> None:
+    acc = None
+    for chunk in [
+        _stream_chunk("Hello"),
+        _stream_chunk(", world", finish_reason=FinishReason.STOP),
+    ]:
+        acc = google_genai_gemini_accumulator(acc, chunk)
+
+    assert acc.candidates[0].finish_reason == FinishReason.STOP
+    assert acc.candidates[0].content.parts == [Part(text="Hello, world")]
+
+
+def test_accumulator_handles_chunk_without_content() -> None:
+    acc = google_genai_gemini_accumulator(None, _stream_chunk("Hello"))
+    acc = google_genai_gemini_accumulator(
+        acc, _stream_chunk(content=False, finish_reason=FinishReason.SAFETY)
+    )
+
+    assert acc.candidates[0].finish_reason == FinishReason.SAFETY
+    assert acc.candidates[0].content.parts == [Part(text="Hello")]
+
+
+def test_accumulator_handles_chunks_without_usage_metadata() -> None:
+    acc = google_genai_gemini_accumulator(None, _stream_chunk("Hello", usage=False))
+    acc = google_genai_gemini_accumulator(acc, _stream_chunk(" again", usage=False))
+    acc = google_genai_gemini_accumulator(acc, _stream_chunk("!"))
+
+    assert acc.candidates[0].content.parts == [Part(text="Hello again!")]
+    assert acc.usage_metadata == GenerateContentResponseUsageMetadata(
+        prompt_token_count=5, candidates_token_count=3, total_token_count=8
+    )
